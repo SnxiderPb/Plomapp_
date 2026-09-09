@@ -1,0 +1,115 @@
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000'
+
+function parseJwtPayload(token) {
+  if (typeof token !== 'string') return null
+  const parts = token.split('.')
+  if (parts.length !== 3) return null
+  try {
+    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
+    const json = decodeURIComponent(atob(base64).split('').map((char) => `%${`00${char.charCodeAt(0).toString(16)}`.slice(-2)}`).join(''))
+    return JSON.parse(json)
+  } catch {
+    return null
+  }
+}
+
+function isValidAuthToken(token) {
+  const payload = parseJwtPayload(token)
+  if (!payload) return false
+  if (typeof payload.sub !== 'string') return false
+  if (payload.exp && Date.now() >= payload.exp * 1000) return false
+  return true
+}
+
+export async function apiFetch(path, options = {}) {
+  let token = localStorage.getItem('authToken')
+  const headers = { 'Content-Type': 'application/json', ...options.headers }
+
+  if (token && !isValidAuthToken(token)) {
+    localStorage.removeItem('authToken')
+    token = null
+  }
+
+  if (token) headers.Authorization = `Bearer ${token}`
+
+  const response = await fetch(`${API_URL}${path}`, { ...options, headers })
+  const data = await response.json().catch(() => ({}))
+
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 422) {
+      localStorage.removeItem('authToken')
+      localStorage.removeItem('user')
+      localStorage.removeItem('userRole')
+    }
+    throw new Error(data.message || data.error || 'Error en la solicitud')
+  }
+
+  return data
+}
+
+export const authApi = {
+  login: (email, password, role) =>
+    apiFetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password, role }) }),
+
+  register: (payload) =>
+    apiFetch('/api/auth/register', { method: 'POST', body: JSON.stringify(payload) }),
+
+  forgotPassword: (email) =>
+    apiFetch('/api/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email }) }),
+
+  updateProfile: (payload) =>
+    apiFetch('/api/auth/profile', { method: 'PATCH', body: JSON.stringify(payload) }),
+}
+
+export const servicesApi = {
+  getAll: () => apiFetch('/api/services'),
+}
+
+export const appointmentsApi = {
+  getAll: () => apiFetch('/api/appointments'),
+  getById: (id) => apiFetch(`/api/appointments/${id}`),
+  create: (payload) =>
+    apiFetch('/api/appointments', { method: 'POST', body: JSON.stringify(payload) }),
+  updateStatus: (id, status) =>
+    apiFetch(`/api/appointments/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  cancel: (id) =>
+    apiFetch(`/api/appointments/${id}`, { method: 'PATCH', body: JSON.stringify({ status: 'cancelled' }) }),
+  reschedule: (id, date, time) =>
+    apiFetch(`/api/appointments/${id}`, { method: 'PATCH', body: JSON.stringify({ date, time, status: 'scheduled' }) }),
+  assignTechnician: (id, technicianId) =>
+    apiFetch(`/api/appointments/${id}`, { method: 'PATCH', body: JSON.stringify({ technicianId }) }),
+  getTechnicianOptions: (date, serviceId) =>
+    apiFetch(`/api/technicians/available?date=${date}&serviceId=${serviceId}`),
+}
+
+export const techniciansApi = {
+  getSlots: (date, serviceId) =>
+    apiFetch(`/api/technicians/slots?date=${date}&serviceId=${serviceId}`),
+  getMyAppointments: () =>
+    apiFetch('/api/technicians/appointments'),
+  getProfile: () =>
+    apiFetch('/api/technicians/profile'),
+  updateAppointmentStatus: (id, status) =>
+    apiFetch(`/api/technicians/appointments/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+}
+
+export const adminApi = {
+  getDashboard: () => apiFetch('/api/admin/dashboard'),
+  getUsers: () => apiFetch('/api/admin/users'),
+  updateAppointmentStatus: (id, status) =>
+    apiFetch(`/api/admin/appointments/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  updateUser: (id, payload) =>
+    apiFetch(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+
+  createUser: (payload) =>
+    apiFetch('/api/admin/users', { method: 'POST', body: JSON.stringify(payload) }),
+}
+
+export function formatPrice(amount) {
+  return `Desde $${amount.toLocaleString('es-CO')}`
+}
+
+export function getInitials(name) {
+  if (!name) return '?'
+  return name.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()
+}
